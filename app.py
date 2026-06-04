@@ -1122,6 +1122,81 @@ def reverse_geocode():
         
     return jsonify({"address": f"{lat}, {lng}"})
 
+@app.route('/get-nearby-safe-zones', methods=['GET'])
+def get_nearby_safe_zones():
+    lat = request.args.get('lat', 22.3511, type=float)
+    lng = request.args.get('lng', 78.6677, type=float)
+    
+    # Reverse geocode to get the city/area name for better Gemini results
+    city_name = "this area"
+    try:
+        geo_url = f"https://nominatim.openstreetmap.org/reverse?format=json&lat={lat}&lon={lng}&zoom=10"
+        geo_headers = {"User-Agent": "SafeRouteAI-Hackathon/1.0"}
+        geo_resp = requests.get(geo_url, headers=geo_headers, timeout=5)
+        if geo_resp.status_code == 200:
+            geo_data = geo_resp.json()
+            addr = geo_data.get("address", {})
+            city_name = addr.get("city") or addr.get("town") or addr.get("village") or addr.get("state_district") or addr.get("state") or "this area"
+    except Exception as e:
+        print(f"Reverse geocode for SOS failed: {e}")
+    
+    prompt = f"""You are an emergency response AI. A user has triggered an SOS emergency alert.
+Their current location is: latitude {lat}, longitude {lng} (near {city_name}, India).
+
+Find the 3 closest REAL, EXISTING police stations, hospitals, or verified safe public zones near this exact location.
+These must be actual places that exist in the real world near these coordinates.
+
+Return ONLY a valid JSON array with this exact format (no markdown, no backticks, no explanation):
+[
+  {{
+    "location_name": "Exact Name of Police Station / Hospital / Safe Zone",
+    "description": "Brief 1-line description like: 24/7 Police Station, Government Hospital, etc.",
+    "latitude": <actual_latitude_number>,
+    "longitude": <actual_longitude_number>
+  }}
+]"""
+    
+    system_instruction = "You are a crisis emergency AI. Return ONLY a raw JSON array of real nearby safe locations. No markdown formatting. No explanation text. Just the JSON array."
+    
+    reply = call_gemini(prompt, system_instruction)
+    
+    if reply:
+        try:
+            # Strip any markdown fencing
+            cleaned = reply.strip()
+            if cleaned.startswith("```json"):
+                cleaned = cleaned[7:]
+            if cleaned.startswith("```"):
+                cleaned = cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3]
+            cleaned = cleaned.strip()
+            
+            safe_zones = json.loads(cleaned)
+            if isinstance(safe_zones, list) and len(safe_zones) > 0:
+                return jsonify({"safe_zones": safe_zones})
+        except Exception as e:
+            print(f"Error parsing Gemini safe zones: {e}")
+            print(f"Raw Gemini reply: {reply[:500]}")
+    
+    # Fallback: return the closest safe zones from the local database
+    local_safe = [inc for inc in incidents if inc.get("risk_level") == "Safe Zone"]
+    # Calculate distance and sort
+    for sz in local_safe:
+        dlat = sz["latitude"] - lat
+        dlng = sz["longitude"] - lng
+        sz["_dist"] = (dlat**2 + dlng**2)**0.5
+    local_safe.sort(key=lambda x: x.get("_dist", 999))
+    # Clean up temp field
+    result = []
+    for sz in local_safe[:3]:
+        result.append({
+            "location_name": sz["location_name"],
+            "description": sz["description"],
+            "latitude": sz["latitude"],
+            "longitude": sz["longitude"]
+        })
+    return jsonify({"safe_zones": result})
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

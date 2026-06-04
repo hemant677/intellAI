@@ -823,33 +823,75 @@ window.triggerSOS = function() {
     const countdownEl = document.getElementById("sos-countdown");
     countdownEl.innerText = "10";
     
+    // Reset safe zones with loading spinner
+    const safeZonesContainer = document.getElementById("sos-safe-zones");
+    if (safeZonesContainer) {
+        safeZonesContainer.innerHTML = `
+            <div style="text-align:center; padding:16px; color:var(--text-muted);">
+                <i class="fa-solid fa-circle-notch fa-spin" style="font-size:1.5rem;"></i>
+                <p style="margin-top:8px;">Fetching nearest safe locations near you...</p>
+            </div>
+        `;
+    }
+    
+    // Reset address display
+    const addressEl = document.getElementById("sos-address");
+    if (addressEl) addressEl.innerText = "Detecting your location...";
+    
     // Capture user location
     const latEl = document.getElementById("sos-lat");
     const lngEl = document.getElementById("sos-lng");
     latEl.innerText = "Accessing GPS...";
     lngEl.innerText = "Accessing GPS...";
     
+    // Helper to process the detected/fallback location
+    function processLocation(lat, lng, source) {
+        latEl.innerText = lat;
+        lngEl.innerText = lng;
+        
+        // Reverse-geocode to show a readable address
+        if (addressEl) {
+            addressEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Resolving address...`;
+            fetch(`/reverse-geocode?lat=${lat}&lng=${lng}`)
+                .then(res => res.json())
+                .then(data => {
+                    addressEl.innerHTML = `<i class="fa-solid fa-map-marker-alt"></i> ${data.address}`;
+                })
+                .catch(() => {
+                    addressEl.innerText = `${lat}, ${lng} (${source})`;
+                });
+        }
+        
+        // Load dynamic safe zones for this location
+        loadSOSSafeZones(lat, lng);
+    }
+    
     if (navigator.geolocation) {
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 const lat = parseFloat(pos.coords.latitude.toFixed(6));
                 const lng = parseFloat(pos.coords.longitude.toFixed(6));
-                latEl.innerText = lat;
-                lngEl.innerText = lng;
-                loadSOSSafeZones(lat, lng);
+                processLocation(lat, lng, "GPS");
             },
             (err) => {
-                console.warn("Geolocation permission denied, mocking coordinate indices.");
-                // Mock coordinates in India center
-                latEl.innerText = "22.3511 (Mock)";
-                lngEl.innerText = "78.6677 (Mock)";
-                loadSOSSafeZones(22.3511, 78.6677);
+                console.warn("Geolocation permission denied, using map center.");
+                let fallbackLat = 22.3511;
+                let fallbackLng = 78.6677;
+                if (map) {
+                    fallbackLat = parseFloat(map.getCenter().lat.toFixed(6));
+                    fallbackLng = parseFloat(map.getCenter().lng.toFixed(6));
+                }
+                processLocation(fallbackLat, fallbackLng, "Map Center");
             }
         );
     } else {
-        latEl.innerText = "22.3511 (Mock)";
-        lngEl.innerText = "78.6677 (Mock)";
-        loadSOSSafeZones(22.3511, 78.6677);
+        let fallbackLat = 22.3511;
+        let fallbackLng = 78.6677;
+        if (map) {
+            fallbackLat = parseFloat(map.getCenter().lat.toFixed(6));
+            fallbackLng = parseFloat(map.getCenter().lng.toFixed(6));
+        }
+        processLocation(fallbackLat, fallbackLng, "Default");
     }
     
     // Start countdown
@@ -941,12 +983,19 @@ function loadSOSSafeZones(userLat, userLng) {
     const container = document.getElementById("sos-safe-zones");
     if (!container) return;
     
-    // Fetch all current incidents
-    fetch('/get-incidents')
+    // Show loading state
+    container.innerHTML = `
+        <div style="text-align:center; padding:16px; color:var(--text-muted);">
+            <i class="fa-solid fa-circle-notch fa-spin" style="font-size:1.5rem;"></i>
+            <p style="margin-top:8px;">Scanning nearby police stations, hospitals & safe zones...</p>
+        </div>
+    `;
+    
+    // Fetch dynamic nearby safe zones using Gemini backend
+    fetch(`/get-nearby-safe-zones?lat=${userLat}&lng=${userLng}`)
         .then(res => res.json())
         .then(data => {
-            // Filter for Safe Zones
-            const safeZones = data.incidents.filter(inc => inc.risk_level === 'Safe Zone');
+            const safeZones = data.safe_zones;
             
             // Calculate distance to each
             safeZones.forEach(sz => {
@@ -958,27 +1007,33 @@ function loadSOSSafeZones(userLat, userLng) {
             
             container.innerHTML = "";
             
+            if (safeZones.length === 0) {
+                container.innerHTML = "<div style='font-size:0.8rem; color:var(--text-dimmed);'>No safe zones found near your location.</div>";
+                return;
+            }
+            
             // Display closest 3
-            safeZones.slice(0, 3).forEach(sz => {
+            safeZones.slice(0, 3).forEach((sz, index) => {
                 const card = document.createElement("div");
                 card.className = "sos-safe-card";
+                const mapsUrl = `https://www.google.com/maps/dir/${userLat},${userLng}/${sz.latitude},${sz.longitude}`;
+                const rankIcons = ["🥇", "🥈", "🥉"];
                 card.innerHTML = `
-                    <div>
-                        <h5><i class="fa-solid fa-shield-halved"></i> ${sz.location_name}</h5>
-                        <p style="font-size:0.75rem; color:var(--text-muted); margin:0;">${sz.description}</p>
+                    <div style="flex:1;">
+                        <h5 style="margin:0 0 4px 0;"><span style="font-size:1.1rem;">${rankIcons[index] || ''}</span> <i class="fa-solid fa-shield-halved"></i> ${sz.location_name}</h5>
+                        <p style="font-size:0.75rem; color:var(--text-muted); margin:0 0 6px 0;">${sz.description}</p>
+                        <a href="${mapsUrl}" target="_blank" rel="noopener" style="font-size:0.75rem; color:var(--neon-cyan); text-decoration:none;">
+                            <i class="fa-solid fa-diamond-turn-right"></i> Get Directions
+                        </a>
                     </div>
-                    <span>${sz.distance.toFixed(2)} km away</span>
+                    <span style="white-space:nowrap; font-weight:600; color:var(--neon-purple);">${sz.distance.toFixed(2)} km</span>
                 `;
                 container.appendChild(card);
             });
-            
-            if (safeZones.length === 0) {
-                container.innerHTML = "<div style='font-size:0.8rem; color:var(--text-dimmed);'>No verified safe zones in database.</div>";
-            }
         })
         .catch(err => {
             console.error("Error loading safe zones for SOS:", err);
-            container.innerHTML = "<div style='font-size:0.8rem; color:var(--text-dimmed);'>Failed to load nearby safe zones.</div>";
+            container.innerHTML = "<div style='font-size:0.8rem; color:var(--text-dimmed);'><i class='fa-solid fa-triangle-exclamation'></i> Failed to load nearby safe zones. Please call 112 immediately.</div>";
         });
 }
 
