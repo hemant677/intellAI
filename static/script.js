@@ -802,12 +802,14 @@ function appendChatMessage(text, sender) {
     } else {
         bubble.innerText = text;
     }
-    
-    container.appendChild(bubble);
+                container.appendChild(bubble);
     container.scrollTop = container.scrollHeight;
 }
 
-// SOS EMERGENCY OVERLAY SYSTEM
+// SOS EMERGENCY OVERLAY SYSTEM — Two-step flow
+// Step 1: Show overlay + ask user for location
+// Step 2: User submits location → geocode → fetch safe zones → show results
+
 window.triggerSOS = function() {
     const overlay = document.getElementById("sos-overlay");
     if (!overlay) return;
@@ -815,87 +817,103 @@ window.triggerSOS = function() {
     overlay.classList.remove("hidden");
     playSiren();
     
-    // Reset status labels
+    // Show Step 1 (location input), hide Step 2 (results)
+    document.getElementById("sos-step-location").classList.remove("hidden");
+    document.getElementById("sos-step-results").classList.add("hidden");
+    document.getElementById("sos-countdown-row").style.display = "none";
+    
+    // Clear previous input
+    const input = document.getElementById("sos-location-input");
+    if (input) { input.value = ""; input.focus(); }
+    
+    // Clear old timer
+    if (sosTimer) { clearInterval(sosTimer); sosTimer = null; }
+    
+    showToast("SOS Alert Initiated! Enter your location.", "error");
+};
+
+// User typed a location and clicked "Find Safe Zones"
+window.sosSearchLocation = function() {
+    const input = document.getElementById("sos-location-input");
+    const locationText = input ? input.value.trim() : "";
+    
+    if (!locationText) {
+        showToast("Please enter your current location.", "warning");
+        return;
+    }
+    
+    // Geocode the typed location using Nominatim
+    showToast("Searching for your location...", "info");
+    
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(locationText)}&limit=1`, {
+        headers: { "User-Agent": "SafeRouteAI-Hackathon/1.0" }
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.length === 0) {
+            showToast("Could not find that location. Try a more specific name.", "error");
+            return;
+        }
+        const lat = parseFloat(parseFloat(data[0].lat).toFixed(6));
+        const lng = parseFloat(parseFloat(data[0].lon).toFixed(6));
+        const displayName = data[0].display_name.split(",").slice(0, 3).join(",");
+        
+        sosShowResults(lat, lng, displayName);
+    })
+    .catch(err => {
+        console.error("Geocode error:", err);
+        showToast("Failed to locate. Try again or use GPS.", "error");
+    });
+};
+
+// User clicked "Use my GPS location"
+window.sosUseGPS = function() {
+    if (!navigator.geolocation) {
+        showToast("GPS not available on this device.", "error");
+        return;
+    }
+    showToast("Accessing GPS...", "info");
+    navigator.geolocation.getCurrentPosition(
+        (pos) => {
+            const lat = parseFloat(pos.coords.latitude.toFixed(6));
+            const lng = parseFloat(pos.coords.longitude.toFixed(6));
+            // Reverse geocode to get address
+            fetch(`/reverse-geocode?lat=${lat}&lng=${lng}`)
+                .then(r => r.json())
+                .then(d => sosShowResults(lat, lng, d.address))
+                .catch(() => sosShowResults(lat, lng, `${lat}, ${lng}`));
+        },
+        (err) => {
+            console.warn("GPS denied:", err);
+            showToast("GPS access denied. Please type your location.", "error");
+        }
+    );
+};
+
+// Show SOS results panel after location is resolved
+function sosShowResults(lat, lng, addressText) {
+    // Hide Step 1, show Step 2
+    document.getElementById("sos-step-location").classList.add("hidden");
+    document.getElementById("sos-step-results").classList.remove("hidden");
+    document.getElementById("sos-countdown-row").style.display = "block";
+    
+    // Populate address + coords
+    document.getElementById("sos-resolved-address").innerText = addressText;
+    document.getElementById("sos-lat").innerText = lat;
+    document.getElementById("sos-lng").innerText = lng;
+    
+    // Reset dispatch status
     const msgEl = document.getElementById("sos-message");
-    msgEl.innerText = "Initializing security emergency beacon...";
+    msgEl.innerText = "Scanning nearby safe zones...";
     msgEl.className = "status-msg text-yellow";
     
-    const countdownEl = document.getElementById("sos-countdown");
-    countdownEl.innerText = "10";
-    
-    // Reset safe zones with loading spinner
-    const safeZonesContainer = document.getElementById("sos-safe-zones");
-    if (safeZonesContainer) {
-        safeZonesContainer.innerHTML = `
-            <div style="text-align:center; padding:16px; color:var(--text-muted);">
-                <i class="fa-solid fa-circle-notch fa-spin" style="font-size:1.5rem;"></i>
-                <p style="margin-top:8px;">Fetching nearest safe locations near you...</p>
-            </div>
-        `;
-    }
-    
-    // Reset address display
-    const addressEl = document.getElementById("sos-address");
-    if (addressEl) addressEl.innerText = "Detecting your location...";
-    
-    // Capture user location
-    const latEl = document.getElementById("sos-lat");
-    const lngEl = document.getElementById("sos-lng");
-    latEl.innerText = "Accessing GPS...";
-    lngEl.innerText = "Accessing GPS...";
-    
-    // Helper to process the detected/fallback location
-    function processLocation(lat, lng, source) {
-        latEl.innerText = lat;
-        lngEl.innerText = lng;
-        
-        // Reverse-geocode to show a readable address
-        if (addressEl) {
-            addressEl.innerHTML = `<i class="fa-solid fa-spinner fa-spin"></i> Resolving address...`;
-            fetch(`/reverse-geocode?lat=${lat}&lng=${lng}`)
-                .then(res => res.json())
-                .then(data => {
-                    addressEl.innerHTML = `<i class="fa-solid fa-map-marker-alt"></i> ${data.address}`;
-                })
-                .catch(() => {
-                    addressEl.innerText = `${lat}, ${lng} (${source})`;
-                });
-        }
-        
-        // Load dynamic safe zones for this location
-        loadSOSSafeZones(lat, lng);
-    }
-    
-    if (navigator.geolocation) {
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                const lat = parseFloat(pos.coords.latitude.toFixed(6));
-                const lng = parseFloat(pos.coords.longitude.toFixed(6));
-                processLocation(lat, lng, "GPS");
-            },
-            (err) => {
-                console.warn("Geolocation permission denied, using map center.");
-                let fallbackLat = 22.3511;
-                let fallbackLng = 78.6677;
-                if (map) {
-                    fallbackLat = parseFloat(map.getCenter().lat.toFixed(6));
-                    fallbackLng = parseFloat(map.getCenter().lng.toFixed(6));
-                }
-                processLocation(fallbackLat, fallbackLng, "Map Center");
-            }
-        );
-    } else {
-        let fallbackLat = 22.3511;
-        let fallbackLng = 78.6677;
-        if (map) {
-            fallbackLat = parseFloat(map.getCenter().lat.toFixed(6));
-            fallbackLng = parseFloat(map.getCenter().lng.toFixed(6));
-        }
-        processLocation(fallbackLat, fallbackLng, "Default");
-    }
+    // Load safe zones
+    loadSOSSafeZones(lat, lng);
     
     // Start countdown
     let secondsLeft = 10;
+    const countdownEl = document.getElementById("sos-countdown");
+    countdownEl.innerText = secondsLeft;
     if (sosTimer) clearInterval(sosTimer);
     
     sosTimer = setInterval(() => {
@@ -903,20 +921,19 @@ window.triggerSOS = function() {
         countdownEl.innerText = secondsLeft;
         
         if (secondsLeft === 5) {
-            msgEl.innerText = "BROADCASTING: Encrypted SOS dispatched to nearest police patrol networks across India.";
+            msgEl.innerText = "BROADCASTING: Encrypted SOS dispatched to nearest police patrol networks.";
             msgEl.className = "status-msg text-orange";
         }
         
         if (secondsLeft <= 0) {
             clearInterval(sosTimer);
-            msgEl.innerText = "DISPATCH SENT! Police dispatch active. Local street wardens notified. Emergency siren active. Stay where you are.";
+            msgEl.innerText = "DISPATCH SENT! Police dispatch active. Stay where you are.";
             msgEl.className = "status-msg text-red pulse-red";
-            countdownEl.parentNode.innerText = "Emergency Broadcast Finalized.";
         }
     }, 1000);
     
-    showToast("SOS Alert Initiated!", "error");
-};
+    showToast("Emergency safe zones loaded!", "error");
+}
 
 window.deactivateSOS = function() {
     const overlay = document.getElementById("sos-overlay");

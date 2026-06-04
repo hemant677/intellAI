@@ -442,40 +442,54 @@
             <div class="sos-console-header text-center">
                 <div class="sos-alert-icon pulse-red"><i class="fa-solid fa-circle-exclamation"></i></div>
                 <h2 class="text-red">EMERGENCY ALERT ACTIVATED</h2>
-                <p class="sos-subtitle">Broadcasting coordinates and security message...</p>
+                <p class="sos-subtitle">Enter your current location to find nearest safe zones</p>
             </div>
             
             <div class="sos-console-body">
-                <div class="sos-metric">
-                    <span class="metric-lbl">YOUR COORDINATES</span>
-                    <div class="coord-box" id="sos-coords-box">
-                        LAT: <span id="sos-lat">Loading...</span> | LNG: <span id="sos-lng">Loading...</span>
+                <!-- STEP 1: Ask for location -->
+                <div id="sos-step-location" class="sos-metric">
+                    <span class="metric-lbl"><i class="fa-solid fa-location-crosshairs"></i> WHERE ARE YOU RIGHT NOW?</span>
+                    <div style="display:flex; gap:8px; margin-top:8px;">
+                        <input type="text" id="sos-location-input" placeholder="e.g. Connaught Place, Delhi" style="flex:1; padding:10px 14px; border-radius:8px; border:1px solid var(--border-color); background:var(--bg-card); color:var(--text-primary); font-size:0.95rem;">
+                        <button class="btn btn-primary" onclick="sosSearchLocation()" style="white-space:nowrap; padding:10px 20px;">
+                            <i class="fa-solid fa-magnifying-glass"></i> Find Safe Zones
+                        </button>
                     </div>
-                    <div id="sos-address-row" style="margin-top:8px; font-size:0.85rem; color:var(--neon-cyan);">
-                        <i class="fa-solid fa-location-arrow"></i> <span id="sos-address">Detecting your location...</span>
+                    <div style="margin-top:6px; font-size:0.75rem; color:var(--text-muted);">
+                        <button onclick="sosUseGPS()" style="background:none; border:none; color:var(--neon-cyan); cursor:pointer; font-size:0.75rem; padding:0;">
+                            <i class="fa-solid fa-satellite-dish"></i> Or use my GPS location automatically
+                        </button>
                     </div>
                 </div>
-                
-                <div class="sos-metric">
-                    <span class="metric-lbl">EMERGENCY DISPATCH STATUS</span>
-                    <div class="status-box">
-                        <p class="status-msg text-yellow" id="sos-message">Initializing security beacon...</p>
-                    </div>
-                </div>
-                
-                <div class="sos-metric">
-                    <span class="metric-lbl">CLOSEST SAFE ZONES (HEAD TO THESE SPOTS)</span>
-                    <div class="safe-zones-recommendations" id="sos-safe-zones">
-                        <div style="text-align:center; padding:16px; color:var(--text-muted);">
-                            <i class="fa-solid fa-circle-notch fa-spin" style="font-size:1.5rem;"></i>
-                            <p style="margin-top:8px;">Fetching nearest safe locations near you...</p>
+
+                <!-- STEP 2: Results (hidden initially) -->
+                <div id="sos-step-results" class="hidden">
+                    <div class="sos-metric">
+                        <span class="metric-lbl">YOUR LOCATION</span>
+                        <div class="coord-box" id="sos-coords-box">
+                            <i class="fa-solid fa-map-marker-alt text-red"></i> <span id="sos-resolved-address">—</span>
                         </div>
+                        <div style="margin-top:4px; font-size:0.75rem; color:var(--text-muted);">
+                            LAT: <span id="sos-lat">—</span> | LNG: <span id="sos-lng">—</span>
+                        </div>
+                    </div>
+
+                    <div class="sos-metric">
+                        <span class="metric-lbl">EMERGENCY DISPATCH STATUS</span>
+                        <div class="status-box">
+                            <p class="status-msg text-yellow" id="sos-message">Initializing security beacon...</p>
+                        </div>
+                    </div>
+                    
+                    <div class="sos-metric">
+                        <span class="metric-lbl">CLOSEST SAFE ZONES (HEAD TO THESE SPOTS)</span>
+                        <div class="safe-zones-recommendations" id="sos-safe-zones"></div>
                     </div>
                 </div>
             </div>
             
             <div class="sos-console-footer text-center">
-                <div class="countdown-warning">
+                <div class="countdown-warning" id="sos-countdown-row" style="display:none;">
                     Simulating police alert dispatch in <span id="sos-countdown">10</span> seconds.
                 </div>
                 <button class="btn btn-secondary" onclick="deactivateSOS()">Cancel Emergency Alert</button>
